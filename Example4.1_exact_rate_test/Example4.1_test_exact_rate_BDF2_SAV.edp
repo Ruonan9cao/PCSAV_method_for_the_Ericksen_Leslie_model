@@ -1,0 +1,602 @@
+//---------------------------------------------------------------------------
+/*
+	Find (u, p, d) satisfying the the nematic-liquid-crystal flows 
+	BDF2 + Projection + scalar auxiliary variable (ACSAV) scheme
+	Ruonan Cao, Oct 2023
+*/
+//--------------------------------------------------------------------- -----
+
+//*****************************************************************************
+//**************************** Prepare ****************************************
+//*****************************************************************************
+verbosity = 0; // to remove all default output; default value is 1
+string logname = "test_exact_rate_BDF2_SAV_25101101.txt";
+bool refinmesh = false;
+
+//time information
+real dT = 0.05;  //  time step size; 
+real T0 = 0.0;    //  initial time
+real Tf = 0.2;   //  final time
+real PRESSUREPENALTY = 1.0e-20; //1.0e-10;
+real t;
+real Numdt = Tf / dT ;
+//Domain parameters
+real H    = 1.;    //width of box (y-direction)
+real L    = 1.;     //length of channel (x-direction)
+int  Ny   = 200;		//Number of nodes along width of channel
+int  Nx   = 200;
+int  TotalRefine =3;
+//Newton/Picard iteration stopping parameters  
+real tolNewton=1.0e-8, tolPicard=1.0e-8;
+int maxItrNewton = 20, maxItrPicard = 20;
+int numIts;
+//physical parameters
+real nu =0.01;//0.5;
+real M =1.0;//10.;
+real lambda =0.1;
+real eta =0.01;
+real gamma =0.0;
+real gamma1=0.0;
+//---------------------------------------------------------------------
+//  Output flow details
+{
+    ofstream report(logname);
+    report << " ***   nematic liquid crystal   ***" << endl << endl;
+    report << "Numerical scheme: " << endl;
+    report << " ***  BDF2 + Scalar auxiliary variable + Projection  : Exact Convergence rate test " << endl;
+    report << "PROBLEM SETUP: " << endl;
+    report << " Height,            H       = " << H << endl;  
+    report << " Length,            L       = " << L << endl;
+    report << " # bdry nodes (channel length bottom), N01  = " << Nx << endl;  
+    report << " # bdry nodes (channel height right),  N02  = " << Ny << endl;  
+    report << "TIME STEPPING DATA: " << endl;
+    report << "  Time step size,               dT = " << dT << endl;
+    report << "  Initial time,                 T0 = " << T0 << endl;
+    report << "  Final time,                   Tf = " << Tf << endl;
+    report << "  Max iterations,           maxItrNewton = " << maxItrNewton << ", maxItrPicard = " << maxItrPicard<< endl;
+    report << "  Error tolerance,        tolNewton = " << tolNewton << ", tolPicard = " << tolPicard << endl;
+    report << "PROBLEM PARAMETERS: " << endl;
+    report << "Fluid viscosity,         nu = " << nu << ", M = " << M << endl;
+	report << "Parameter: " << "lambda = " << lambda << ", eta= " << eta <<endl;
+    report << "SOLVER OPTIONS: " << endl;
+}
+
+
+
+//*********** Initial Condition ********************************************************
+func afun = 0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t;
+func dxafun = 0.5*pi^2*sin(2.0*pi*x);
+func dxxafun = pi^3*cos(2.0*pi*x);
+func dtafun = pi;
+func dirXinitial = cos(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)  ;
+func dirYinitial = sin(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t) ; 
+//dxd dyd
+func dxd1 = -sin(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*0.5*pi^2*sin(2.0*pi*x);
+func dyd1 =  0.0;
+func dxd2 = cos(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*0.5*pi^2*sin(2.0*pi*x);
+func dyd2 =  0.0;
+//dxxd dyyd
+func dxxd1 = -cos(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*(0.5*pi^2*sin(2.0*pi*x))^2 - sin(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*pi^3*cos(2.0*pi*x);
+func dyyd1 = 0.0;
+func dxxd2 = -sin(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*(0.5*pi^2*sin(2.0*pi*x))^2 + cos(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*pi^3*cos(2.0*pi*x);
+func dyyd2 = 0.0;
+//dt_d
+func dtd1 = -sin(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*pi;
+func dtd2 = cos(0.5*pi*(0.5-0.5*cos(2.0*pi*x)) + pi*t)*pi;
+
+//unintial
+func timefunc = cos(pi*t);
+func dttimefunc = -pi*sin(pi*t);
+func u1 = (sin(pi*x))^2 * sin(2.0*pi*y);
+func u2 =  -sin(2.0*pi*x) * (sin(pi*y))^2;
+func uXinitial =(sin(pi*x))^2 * sin(2.0*pi*y)*sin(t);
+func uYinitial = -sin(2.0*pi*x) * (sin(pi*y))^2*sin(t);
+//dxu dyu
+func dxu1 = pi*sin(2.0*pi*x)*sin(2.0*pi*y)*sin(t);
+func dyu1 = 2.0*pi*(sin(pi*x))^2*cos(2.0*pi*y)*sin(t);
+func dxu2 = -2.0*pi*cos(2.0*pi*x)*(sin(pi*y))^2*sin(t);
+func dyu2 = -pi*sin(2.0*pi*x)*sin(2.0*pi*y)*sin(t);
+//dxxu dyuu
+func dxxu1= 2.0*pi^2*cos(2.0*pi*x)*sin(2.0*pi*y)*sin(t);
+
+func dyyu1= -4.0*pi^2*(sin(pi*x))^2*sin(2.0*pi*y)*sin(t);
+func dxxu2= 4.0*pi^2*sin(2.0*pi*x)*(sin(pi*y))^2*sin(t);
+func dyyu2= -2.0*pi^2*sin(2.0*pi*x)*cos(2.0*pi*y)*sin(t);
+//dtu
+func dtu1 = (sin(pi*x))^2 * sin(2.0*pi*y)*cos(t);
+func dtu2 = -sin(2.0*pi*x) * (sin(pi*y))^2*cos(t);
+
+//p-pinitial
+func pinitial = (x*y-0.25)*cos(pi*t);
+//dxp dyp
+func dxp= y*cos(pi*t);
+func dyp= x*cos(pi*t);
+//rightf rightg
+func rightfX = dtd1 + dxd1*uXinitial + dyd1*uYinitial - M*dxxd1 - M*dyyd1;
+func rightfY = dtd2 + dxd2*uXinitial + dyd2*uYinitial - M*dxxd2 - M*dyyd2;
+func rightgX = dtu1+ uXinitial*dxu1 + uYinitial*dyu1 - nu*(dxxu1+dyyu1) + dxp + lambda*dxd1*(dxxd1+dyyd1)+lambda*dxd2*(dxxd2+dyyd2);
+func rightgY = dtu2 + uXinitial*dxu2 + uYinitial*dyu2- nu*(dxxu2+dyyu2) + dyp ;
+//**********************************************************************************************
+//**********************************************************************************************
+//********* Construct mesh (fluid region only) ***********************
+mesh ThF = square(Nx, Ny, [x*L, y*H]);
+//plot (ThF,wait=1);
+//********************************************************************
+real[int] h(TotalRefine+1);
+real[int] errorUL2(TotalRefine+1),     errorUH1semi(TotalRefine+1);
+real[int] errorDL2(TotalRefine+1),   errorDH1semi(TotalRefine+1);
+real[int] errorPL2(TotalRefine+1),     errorPH1semi(TotalRefine+1);
+real[int] errorPiniL2(TotalRefine+1),   errorPiniH1semi(TotalRefine+1);
+real[int] energy(Numdt);
+real rr , rrold , rroldold , V , A , B ;
+//********************************************************************
+//FE-spaces
+//Velocity space, C0- piecewise quadratic
+fespace Uh(ThF,P2);
+//Pressure space, C0- piecewise linear
+fespace Ph(ThF,P1);
+//fe-functions (velocity space)
+// uX,     uY     = current time-step
+// uXold,  uYold  = previous time-step (u^n)
+// uXoldold, uYoldold = second previous time-step (u^{n-1})
+// uXTemp, uYTemp = previous nonlinear-iterate corresponding to current time-step solution (uX, uY)
+Uh uX, uY, uXold, uYold, uXoldold, uYoldold, uXtemp, uYtemp, uhatX, uhatY, ubreveX, ubreveY;
+Uh ustarX, ustarY, ustarhatX, ustarhatY, ustarbreveX, ustarbreveY;
+Uh utildeX, utildeY;
+//fe-functions (orientation space)
+Uh dirX, dirY, dirXold, dirYold, dirXoldold, dirYoldold, dirXoldoldold, dirYoldoldold, dirhatX, dirhatY, dirbreveX, dirbreveY;
+Uh dirtildeX, dirtildeY, dirbarX, dirbarY, dirmaoX, dirmaoY;
+//fe-functions (orientation, newton update functions)
+Uh dirXtemp, dirYtemp, rX, rY;
+//fe-functions (chemical potential, linear variable)
+Uh whatX, whatY, wbreveX, wbreveY, wX, wY, wXold, wYold, wXoldold, wYoldold;
+Uh wtildeX, wtildeY;		
+//fe-functions (velocity space, test functions)
+Uh vX, vY;
+//fe-functions (orientation space, test functions)
+Uh psiX, psiY;
+//
+Ph Hfunc, Hfuncold, g, gold;
+//fe-functions (pressure space)
+// p     = pressure at current time-step
+// pold  = pressure at previous time-step (p^n)
+// poldold = pressure at second previous time-step (p^{n-1})
+// pTemp = previous nonlinear-iterate corresponding to current time-step solution p
+Ph p, pold, poldold, ptemp, phat, pbreve, qq, qqold, qqoldold;
+//fe-functions (pressure space, test functions)
+Ph q;
+
+Ph hValue = hTriangle;
+//solution at final time
+Uh uXtf, uYtf, dirXtf, dirYtf;		// uXtf, uYtf = solution at final time
+Ph ptf;		
+
+//********************************************************************
+//********************************************************************
+//********************************************************************
+//Define coHaon expressions via macros:
+macro div(u1,u2) ( dx(u1) + dy(u2) ) // \nabla\cdot u
+macro dot(u1,u2,v1,v2) ( u1 * v1 + u2 * v2 ) // u\cdot v
+macro Ugradv1(u1,u2,v1) ( u1 * dx(v1) + u2 * dy(v1) ) // u\cdot\nabla v
+macro cc(u1,u2,v1,v2,w1,w2) ( Ugradv1(u1,u2,v1) * w1 + Ugradv1(u1,u2,v2) * w2 ) // (u\nabla)v\cdot w
+//macro cch(u1,u2,v1,v2,w1,w2) ( 0.5*(cc(u1,u2,v1,v2,w1,w2) - cc(u1,u2,w1,w2,v1,v2)) ) //  (u\cdot\nabla)v\cdot w
+macro cch(u1,u2,v1,v2,w1,w2) ( cc(u1,u2,v1,v2,w1,w2) +0.5*div(u1,u2)*dot(v1,v2,w1,w2) ) //  (u\cdot\nabla)v\cdot w
+macro contract(u1,u2,v1,v2) ( dx(u1) * dx(v1) + dx(u2) * dx(v2) + dy(u1) * dy(v1) + dy(u2) * dy(v2) ) // \nabla u\cdot\\nable v
+macro ss(u1,u2,v1,v2) ( dot(dx(v1),dy(v1),dx(v1),dy(v1)) * u1 + dot(dx(v1),dy(v1),dx(v2),dy(v2)) * u2 ) //(\nabla d)^t u\cdot\nabla d
+macro ssh(u1,u2,v1,v2,w1,w2) ( ss(u1,u2,v1,v2) * w1 + ss(u2,u1,v2,v1) * w2 ) //(\nabla d)^t u\cdot\nabla d\cdot v
+macro lapa1(u1,u2) ( dxx(u1) + dxy(u2) )// \nabla(\nabla\cdot u)
+macro lapa2(u1,u2) ( dyx(u1) + dyy(u2) )// \nabla(\nabla\cdot u)
+
+//**********************************************************************************
+//************ Solve for dhat **************************************************
+//**********************************************************************************
+problem solveDhat([dirhatX, dirhatY], [psiX, psiY], solver=UMFPACK)=
+	int2d(ThF)(
+		  1.5* dot(dirhatX, dirhatY, psiX, psiY)/ dT
+		+ M* contract(dirhatX, dirhatY, psiX, psiY)
+		+ 2.0* M/ eta^2* dot(dirtildeX, dirtildeY, dirhatX, dirhatY)* dot(dirtildeX, dirtildeY, psiX, psiY)
+	)
+   +int2d(ThF)(
+		- 2.0* dot(dirXold, dirYold, psiX, psiY)/ dT
+		+ 0.5* dot(dirXoldold, dirYoldold, psiX, psiY)/ dT
+		- 8.0* M/ (3.0* eta^2)* dot(dirtildeX, dirtildeY, dirXold, dirYold)* dot(dirtildeX, dirtildeY, psiX, psiY)
+		+ 2.0* M/ (3.0* eta^2)* dot(dirtildeX, dirtildeY, dirXoldold, dirYoldold)* dot(dirtildeX, dirtildeY, psiX, psiY)
+		+ 4.0* M/ 3.0* dot(dirtildeX, dirtildeY, psiX, psiY)* qqold
+		- 1.0* M/ 3.0* dot(dirtildeX, dirtildeY, psiX, psiY)* qqoldold
+		- dot(rightfX,rightfY,psiX, psiY )
+	);
+
+//**********************************************************************************
+//************ Solve for dbreve **************************************************
+//**********************************************************************************
+problem solveDbreve([dirbreveX, dirbreveY], [psiX, psiY], solver=UMFPACK)=
+	int2d(ThF)(
+		  1.5* dot(dirbreveX, dirbreveY, psiX, psiY)/ dT
+		+ M* contract(dirbreveX, dirbreveY, psiX, psiY)
+		+ 2.0* M/ eta^2* dot(dirtildeX, dirtildeY, dirbreveX, dirbreveY)* dot(dirtildeX, dirtildeY, psiX, psiY)
+	)
+   +int2d(ThF)(
+		  cc(utildeX, utildeY, dirtildeX, dirtildeY, psiX, psiY)
+	);
+
+ 
+//**********************************************************************************
+//************ Solve for ustarhat **************************************************
+//**********************************************************************************
+problem solveUstarhat([ustarhatX, ustarhatY], [vX, vY], solver=UMFPACK)=
+	int2d(ThF)(
+		 1.5* dot(ustarhatX, ustarhatY, vX, vY)/ dT
+		+ cch(utildeX, utildeY, ustarhatX, ustarhatY, vX, vY)
+		+ nu* contract(ustarhatX, ustarhatY, vX, vY) 
+	)
+   +int2d(ThF)(
+		- 2.0* dot(uXold, uYold, vX, vY)/ dT
+		+ 0.5* dot(uXoldold, uYoldold, vX, vY)/ dT
+		- pold* div(vX,vY)
+		- dot(rightgX,rightgY,vX, vY )
+	)
+ +on(1,2,3,4, ustarhatX = 0.0, ustarhatY = 0.0) ; 
+	
+	
+//**********************************************************************************
+//************ Solve for ustarbreve **************************************************
+//**********************************************************************************
+problem solveUstarbreve([ustarbreveX, ustarbreveY] , [vX, vY], solver=UMFPACK)=
+	int2d(ThF)(
+		 1.5* dot(ustarbreveX, ustarbreveY, vX,vY)/dT
+		+ cch(utildeX, utildeY, ustarbreveX, ustarbreveY, vX, vY)
+		+ nu* contract(ustarbreveX, ustarbreveY, vX, vY)
+	)
+   +int2d(ThF)(
+		- lambda* cc(vX, vY, dirtildeX, dirtildeY, wtildeX, wtildeY)
+	)
+ +on(1,2,3,4, ustarbreveX = 0.0, ustarbreveY = 0.0) ; 
+ 
+//**********************************************************************************
+//************ Solve for Phat **************************************************
+//**********************************************************************************
+
+problem solvePhat(phat, q, init=1, solver=UMFPACK)=
+	int2d(ThF)(- dx(phat)*dx(q) - dy(phat)*dy(q)
+	) 
+   +int2d(ThF)( 
+		  dx(pold)* dx(q)+ dy(pold)* dy(q)
+		- 1.5* div(ustarhatX, ustarhatY)* q/ dT
+		- nu* lapa1(ustarhatX, ustarhatY)* dx(q)
+		- nu* lapa2(ustarhatX, ustarhatY)* dy(q)
+	);
+	
+
+//**********************************************************************************
+//************ Solve for Pbreve **************************************************
+//**********************************************************************************
+
+problem solvePbreve(pbreve, q, init=1,  solver=UMFPACK)=
+	int2d(ThF)(- dx(pbreve)*dx(q) - dy(pbreve)*dy(q)
+	) 
+   +int2d(ThF)( 
+		 - 1.5* div(ustarbreveX, ustarbreveY)* q/ dT
+		 - nu* lapa1(ustarbreveX, ustarbreveY)* dx(q)
+		 - nu* lapa2(ustarbreveX, ustarbreveY)* dy(q)
+	);
+	
+//**********************************************************************************
+//************ Solve for ustarhat **************************************************
+//**********************************************************************************
+problem solveUhat([uhatX, uhatY] , [vX, vY], init=1,  solver=UMFPACK)=
+	int2d(ThF)(
+		  dot(uhatX, uhatY, vX,vY)
+	)
+   +int2d(ThF)(
+		- dot(ustarhatX, ustarhatY, vX,vY)
+		+ 2.0*dT/3.0*dot(dx(phat),dy(phat), vX,vY)
+		- 2.0*dT/3.0*dot(dx(pold),dy(pold), vX,vY)
+		+ 2.0*dT/3.0*nu*lapa1(ustarhatX,ustarhatY)*vX
+		+ 2.0*dT/3.0*nu*lapa2(ustarhatX,ustarhatY)*vY
+	)
++on(1,3, uhatY = 0.0) 
++on(2,4, uhatX = 0.0) ;	
+
+problem solveUbreve([ubreveX, ubreveY] , [vX, vY], init=1, solver=UMFPACK)=
+	int2d(ThF)(
+		  dot(ubreveX, ubreveY, vX,vY)
+	)
+   +int2d(ThF)(
+		- dot(ustarbreveX, ustarbreveY, vX,vY)
+		+ 2.0*dT/3.0*dot(dx(pbreve),dy(pbreve), vX,vY)
+		+ 2.0*dT/3.0*nu*lapa1(ustarbreveX,ustarbreveY)*vX
+		+ 2.0*dT/3.0*nu*lapa2(ustarbreveX,ustarbreveY)*vY
+	)
++on(1,3, ubreveY = 0.0) 
++on(2,4, ubreveX = 0.0) ;	
+	
+//*************************************************************************************************
+//*******************************************************************************
+//******** First Order IMEX Euler for the First Step ****************************
+//*******************************************************************************
+//Newton linearized increment equation, need dirXtemp, dirYtemp (prev newton update), dirXold, dirYold (time evolution), uXtemp, uYtemp (prev picard update)
+problem ACNewton1st([rX, rY], [psiX, psiY], solver= UMFPACK) =
+   int2d(ThF)(
+      (1.0 / dT) * dot(rX, rY, psiX, psiY) 
+    + M * contract(rX, rY, psiX, psiY)
+    + M / (eta^2) * 3.0 * dot(dirXtemp, dirYtemp, dirXtemp, dirYtemp) * dot(rX, rY, psiX, psiY)
+   )
+ + int2d(ThF)(
+      (1.0 / dT) * dot(dirXtemp, dirYtemp, psiX, psiY)
+    - (1.0 / dT) * dot(dirXold, dirYold, psiX, psiY)
+    + cc(uXtemp, uYtemp, dirXold, dirYold, psiX, psiY)
+    + M * contract(dirXtemp, dirYtemp, psiX, psiY)
+    + M / (eta^2) * dot(dirXtemp, dirYtemp, dirXtemp, dirYtemp) * dot(dirXtemp, dirYtemp, psiX, psiY)
+    - M / (eta^2) * dot(dirXold, dirYold, psiX, psiY)    
+	- dot(rightfX,rightfY,psiX, psiY )
+   );
+
+//Picard iteration for NS, need uXold, uYold (time evolution), dirXold, dirYold (time evolution), dirX, dirY (time evolution, last newton update)
+problem NSPicard1st([uX,uY,p],[vX,vY,q], solver=UMFPACK) =
+   int2d(ThF)(
+      (1.0 / dT) * dot(uX,uY,vX,vY)
+    + cch( uXold, uYold, uX, uY, vX, vY)
+    + nu * contract(uX, uY, vX, vY)
+    - p * div(vX, vY)
+	+ q * div(uX, uY)
+    - PRESSUREPENALTY * p * q
+    + lambda / M * ssh( uX , uY , dirXold , dirYold , vX, vY )
+   )
+ + int2d(ThF)(
+    - (1.0 / dT) * dot(uXold,uYold,vX,vY)
+    + lambda / (dT*M) * cc(vX, vY, dirXold, dirYold, dirX, dirY)
+    - lambda / (dT*M) * cc(vX, vY, dirXold, dirYold, dirXold, dirYold) 
+	- lambda / M * cc(vX, vY, dirXold, dirYold, rightfX,rightfY)
+	- dot(rightgX,rightgY,vX, vY )
+   )
+ +on( 1,2,3,4, uX = 0.0, uY = 0.0 ) ;
+
+
+//*************************************************************************************************
+//*********** Main SOLVE (Artificial Compression + SAV) ****************
+//*************************************************************************************************
+real    tmpPH1err, error, errorp, tmpUH1err, tmpUH1norm; //temporary holder for error at each Newton/Picard iteration
+uXtf = 0.0;
+uYtf = 0.0;
+dirXtf = 0.0;
+dirYtf = 0.0;
+ptf  = 0.0;
+
+
+//LOOP #0:  Refinement loop
+for (int refNumber = 0; refNumber < (TotalRefine+1); refNumber++)
+{
+	//refine mesh
+	if (refNumber > 0){
+		if (refinmesh){
+			ThF = square((2.^refNumber)*Nx, (2.^refNumber)*Ny, [x*H, y*L]);//change h
+			
+		}
+		dT = dT/(2.);//change dT
+	}
+	real area = int2d(ThF)(1.0);
+    
+
+	//*************************************************************** 
+	//********** Initialize *****************************************
+	//***************************************************************
+	t = T0;
+
+	uX = uXinitial;
+	uY = uYinitial;
+	p  = pinitial; 
+	dirX = dirXinitial;
+	dirY = dirYinitial;
+	qq = 1.0/eta^2 * (dirX^2 + dirY^2 - 1.0);
+	rr = exp(-t/Tf);
+	wX = -( dxx(dirX)+dyy(dirX) ) + qq*dirX ;
+	wY = -( dxx(dirY)+dyy(dirY) ) + qq*dirY ;
+	
+
+	//cout << "INitialize_time" <<endl;
+	//plot([dirX,dirY], cmm=logname + " orientation, " + "time level = " + t, value=1);
+	//plot(ThF, [uX,uY], cmm=logname + " velocity, " + "time level = " + t, value=1);
+	
+	//***************************************************************
+	//****************** First time-step ****************************
+	//***************************************************************
+	t = t + dT;
+	
+	//Store from previous time-step, 
+	uXoldold = uX;      
+	uYoldold = uY;
+	poldold  = p; 
+	dirXoldold = dirX;
+	dirYoldold = dirY;
+	qqoldold = qq;
+	wXoldold = wX;
+	wYoldold = wY;
+	rroldold = rr;
+	//---------------------------------------------------------------	
+	//  u(n) <- u(n+1)
+	uXold = uX;      
+	uYold = uY;
+	pold  = p;
+	dirXold = dirX;
+	dirYold = dirY;
+	qqold = qq;
+	rrold = rr;
+	wXold = wX;
+	wYold = wY;
+	gold = g;
+	Hfuncold = Hfunc;
+	
+	uX = uXinitial;
+	uY = uYinitial;
+	p  = pinitial; 
+	dirX = dirXinitial;
+	dirY = dirYinitial;
+	qq = 1.0/eta^2 * (dirX^2 + dirY^2 - 1.0);
+	rr = exp(-t/Tf);
+	wX = -( dxx(dirX)+dyy(dirX) ) + qq*dirX ;
+	wY = -( dxx(dirY)+dyy(dirY) ) + qq*dirY ;
+	
+	
+	cout << "first_time" <<endl;
+	
+	//initialize real-time clock tracker
+	real outputCLOCK;	
+	real loopt;
+	outputCLOCK = clock();	
+
+	//***************************************************************
+	//****************** coupled system time loop ******************
+	//***************************************************************
+	while ( t < (Tf-1.0e-12) ){
+		loopt = clock();
+		t = t + dT;
+		cout << endl << "NUMERICAL TIME LEVEL  t = " << t << endl;	
+		
+		//Store from previous time-step, 
+		//  u(n) <- u(n+1)
+		uXold = uX;      
+		uYold = uY;
+		pold  = p;
+		dirXold = dirX;//d_2nd
+		dirYold = dirY;
+		qqold = qq;
+		rrold = rr;
+		wXold = wX;
+		wYold = wY;
+		gold = g;
+		Hfuncold = Hfunc;
+		
+		//utilde dtilde wtilde
+		utildeX = 2.0* uXold - uXoldold;
+		utildeY = 2.0* uYold - uYoldold;
+		dirtildeX = 2.0* dirXold - dirXoldold;
+		dirtildeY = 2.0* dirYold - dirYoldold;
+		wtildeX = 2.0* wXold - wXoldold;
+		wtildeY = 2.0* wYold - wYoldold;
+		
+		
+		//solve problem
+		solveDhat;//output: dirhatX dirhatY
+		solveDbreve;//output: dirbreveX dirbreveY
+		solveUstarhat;//output: ustarhatX ustarhatY
+		solveUstarbreve;//output: ustarbreveX ustarbreveY
+		solvePhat;//output: phat
+		solvePbreve;//output: pbreve
+		solveUhat;//output: uhat
+		solveUbreve;//output: ubreve
+		
+		whatX = -( (3.0*dirhatX - 4.0*dirXold + dirXoldold )/ (2.0*M*dT) - rightfX/M  );
+		whatY = -( (3.0*dirhatY - 4.0*dirYold + dirYoldold )/ (2.0*M*dT) - rightfY/M  );
+		// whatX = -(3.0*dirhatX - 4.0*dirXold + dirXoldold)/ (2.0*M*dT);
+		// whatY = -(3.0*dirhatY - 4.0*dirYold + dirYoldold)/ (2.0*M*dT);
+		wbreveX = -1.0 / M * (1.5*dirbreveX/dT + Ugradv1(utildeX,utildeY,dirtildeX));
+		wbreveY = -1.0 / M * (1.5*dirbreveY/dT + Ugradv1(utildeX,utildeY,dirtildeY));
+		
+		//V
+		A = 2.0*rrold/dT*exp(-(t)/Tf)-0.5/dT*rroldold*exp(-(t)/Tf)
+			+int2d(ThF)( cc( utildeX,utildeY,dirtildeX,dirtildeY,whatX,whatY ) )
+			-int2d(ThF)( cc( ustarhatX,ustarhatY,dirtildeX,dirtildeY,wtildeX,wtildeY ) );
+		B =  (1.5/dT+1.0/Tf)*exp(-2.0*t/Tf)
+			-int2d(ThF)( cc( utildeX,utildeY,dirtildeX,dirtildeY,wbreveX,wbreveY ) )
+			+int2d(ThF)( cc( ustarbreveX,ustarbreveY,dirtildeX,dirtildeY,wtildeX,wtildeY  ) );
+		A = A*dT;
+		B = B*dT;
+		V = A / B;
+		cout << "at t = " << t << ", V = " << V << endl;
+		
+		// dirX dirY uX, uY
+		dirX = dirhatX + V * dirbreveX;
+		dirY = dirhatY + V * dirbreveY;
+		uX = uhatX + V * ubreveX;
+		uY = uhatY + V * ubreveY;
+		ustarX = ustarhatX + V * ustarbreveX;
+		ustarY = ustarhatY + V * ustarbreveY;
+		wX = whatX + V * wbreveX;
+		wY = whatY + V * wbreveY;
+		p = phat + V * pbreve;
+		//wX = -( dxx(dirX)+dyy(dirX) ) + qq*dirtildeX + gamma/eta^2*(dirX-dirtildeX) ;
+		//wY = -( dxx(dirY)+dyy(dirY) ) + qq*dirtildeY + gamma/eta^2*(dirY-dirtildeY);
+		rr = V * exp(-t/Tf);
+		
+		//cout << "at t = " << t << ", dir_norm = " << dirX^2+dirY^2 << endl;
+
+		//p
+		real pp = int2d(ThF)(p)/area;
+		p = p - pp;
+		qq = 2.0/eta^2 * dot(dirtildeX, dirtildeY, dirX, dirY)- 8.0/eta^2/3.0 * dot(dirtildeX, dirtildeY, dirXold, dirYold)
+			+2.0/eta^2/3.0 * dot(dirtildeX, dirtildeY, dirXoldold, dirYoldold) + 4.0/3.0*qqold -qqoldold/3.0;	
+		
+		//u(n-1) <- u(n)
+		uXoldold = uXold;
+		uYoldold = uYold;
+		poldold = pold;
+		dirXoldold = dirXold;
+		dirYoldold = dirYold;
+		qqoldold = qqold;
+		rroldold = rrold;
+		wXoldold = wXold;
+		wYoldold = wYold;
+		
+		//
+		cout << endl << " *** elapsed time = " << clock() - loopt<< endl;
+
+		//plot([uX,uY], cmm=logname + " velocity, " + "time level = " + t, value=1);
+		//plot(ThF, [dirX,dirY], cmm=logname + " orientation, " + "time level = " + t, value=1);
+		//plot(p, cmm=logname + " Pressure, " + "time level = " + t, value=1, fill=1);
+	  
+	} // END WHILE OF TIME LOOP
+
+	 //------------------------------- Cauchy Difference ---------------------------------------------------
+	errorUL2(refNumber) = sqrt(int2d(ThF)( (uX-uXinitial)^2 + (uY-uYinitial)^2 ));
+	errorPL2(refNumber) = sqrt(int2d(ThF)( (p-pinitial)^2  ));
+	errorDL2(refNumber) = sqrt(int2d(ThF)( (dirX-dirXinitial)^2 + (dirY-dirYinitial)^2 ));
+
+	hValue = hTriangle;
+	h(refNumber) = hValue[].max;
+
+	//-------------------------------------------------------------------------------------------
+	{
+		ofstream report(logname,append);
+		report << "# Loop time # " << clock()-outputCLOCK << endl;
+		report << "\n Refinement # " << refNumber << endl;
+	}
+
+	//interpolate solution to the base mesh, for consecutive error computation
+	uXtf = uX;
+	uYtf = uY;
+	dirXtf = dirX;
+	dirYtf = dirY;
+	ptf  = p; 
+	//pinitf = pini; 
+
+	//--------report inside refinement loop, in case program terminates earilier--------
+	//-----------------------------------------------------------------------------------
+	ofstream report(logname,append);
+	report << endl << endl;
+	report << "***********************************************************************" << endl;
+	report << "  h                = " << h << endl << endl;
+	report << "  dT   = " << dT << endl << endl;
+	//-----------------------------------Cauchy Difference----------------------------------------
+	report << "  errorPL2     = " << errorPL2 << endl << endl;
+	report << "  errorDL2     = " << errorDL2 << endl << endl;
+	report << "  errorUL2     = " << errorUL2 << endl << endl;
+	
+	
+	
+
+} // END FOR LOOP #0 (refinement)
+ofstream report(logname,append);
+report << "***********************************************************************" << endl;
+report<<"rate by cauchy difference:     " <<  "OerrpL2" << "      "<< "OerrdirL2"<< "      "<< "OerruL2" << "      "  << endl;
+real Ofemul2,Ofempl2,OfemDl2;
+for(int i=0;i<TotalRefine;i++)
+{	   
+	Ofempl2=log(errorPL2(i)/errorPL2(i+1))/log(2.0);
+	OfemDl2=log(errorDL2(i)/errorDL2(i+1))/log(2.0);
+	Ofemul2=log(errorUL2(i)/errorUL2(i+1))/log(2.0);
+
+	report << "                                     " << Ofempl2 << "      " << OfemDl2 << "      " << Ofemul2 << "      " <<endl;
+}
+
+
+
